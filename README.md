@@ -10,19 +10,19 @@
 ## 구성
 
 - 👶 5개월 아기 & 방한
+- 📅 서울 약속 & 일정
 - 🧥 어른 한파 대비
 - 🚗 이동 & 숙소
 - 🎮 청주 본가 미션
-- 📅 서울·청주 약속 & 일정
 
 ## 동기화 구조
 
 - Supabase 프로젝트: `https://mlvotnxntapggspylwfb.supabase.co`
 - 테이블: `public.trip_checklist_items` — `id`(text PK), `category_id`(text), `text`(text), `checked`(bool), `sort_order`(int), `updated_at`(timestamptz)
-- 페이지 로드 시 `sort_order` 오름차순 조회 → DB가 완전히 비어 있을 때만 기본 41개 항목을 시드합니다.
+- 페이지 로드 시 `sort_order` 오름차순 조회 → DB가 완전히 비어 있을 때만 기본 42개 항목을 시드합니다.
 - `postgres_changes` 실시간 구독으로 다른 기기의 변경이 1초 내 반영됩니다.
 - 아코디언 열림 상태와 오프라인 캐시만 브라우저 `localStorage`에 남습니다.
 
 ## 수정 방법
 
-`index.html`의 `CATEGORIES`(카테고리 5종)와 `DEFAULT_ITEMS`(기본 41개 항목)를 고치면 기본 목록이 바뀝니다. 이미 DB에 항목이 있으면 기본값은 다시 시드되지 않으므로, 바꾼 뒤에는 페이지의 "기본값 복원" 버튼을 눌러 주세요.
+`index.html`의 `CATEGORIES`(카테고리 5종)와 `DEFAULT_ITEMS`(기본 42개 항목)를 고치면 기본 목록이 바뀝니다. 이미 DB에 항목이 있으면 기본값은 다시 시드되지 않으므로, 바꾼 뒤에는 페이지의 "기본값 복원" 버튼을 눌러 주세요.
