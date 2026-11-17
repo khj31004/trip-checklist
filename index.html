@@ -2,10 +2,13 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#FDFBF7">
     <title>제주 → 서울·청주 4박 5일 가족 여행 체크리스트</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Supabase JS (실시간 동기화) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <!-- Google Fonts: Pretendard & Inter -->
     <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -76,6 +79,22 @@
         .accordion-content {
             transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out;
         }
+        /* 실시간 동기화 점등 애니메이션 */
+        @keyframes syncPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.35; transform: scale(0.85); }
+        }
+        .sync-pulse {
+            animation: syncPulse 1.4s ease-in-out infinite;
+        }
+        /* 원격 변경으로 인한 갱신 시 부드러운 강조 */
+        @keyframes remoteFlash {
+            from { background-color: rgba(196, 154, 94, 0.16); }
+            to { background-color: transparent; }
+        }
+        .remote-flash {
+            animation: remoteFlash 1.2s ease-out;
+        }
     </style>
 </head>
 <body class="min-h-screen pb-16 antialiased selection:bg-warm-200 selection:text-warm-900">
@@ -90,9 +109,18 @@
                     <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-warm-500"></i>
                     <span>🏙️ 서울 · 청주</span>
                 </div>
-                <span class="text-xs font-medium text-warm-700 bg-warm-200/60 px-2.5 py-1 rounded-full">
-                    👶 5개월 아기 동반 4박 5일
-                </span>
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    <!-- 실시간 동기화 상태 -->
+                    <span id="sync-status"
+                          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 border border-warm-200 shadow-sm text-[11px] font-semibold text-warm-700 transition-colors"
+                          title="부부가 각자 기기에서 체크해도 실시간으로 함께 반영됩니다.">
+                        <span id="sync-dot" class="w-1.5 h-1.5 rounded-full bg-amber-400 sync-pulse"></span>
+                        <span id="sync-text">연결 중…</span>
+                    </span>
+                    <span class="text-xs font-medium text-warm-700 bg-warm-200/60 px-2.5 py-1 rounded-full">
+                        👶 5개월 아기 동반 4박 5일
+                    </span>
+                </div>
             </div>
 
             <h1 class="text-2xl sm:text-3xl font-bold text-stone-800 tracking-tight mb-1">
@@ -157,7 +185,7 @@
     <footer class="max-w-3xl mx-auto px-4 sm:px-6 mt-10 text-center">
         <p class="text-xs text-stone-400 flex items-center justify-center gap-1">
             <i data-lucide="save" class="w-3.5 h-3.5"></i>
-            모든 체크 상태와 추가한 항목은 브라우저에 자동 저장됩니다. 안전한 여행 되세요! ✈️
+            모든 체크 상태와 추가한 항목은 두 분의 기기에 실시간으로 함께 저장됩니다. 안전한 여행 되세요! ✈️
         </p>
     </footer>
 
@@ -193,141 +221,539 @@
     </div>
 
     <script>
-        // 로컬 스토리지 키
-        const STORAGE_KEY = 'jeju_seoul_cheongju_trip_v1';
+        /* ============================================================
+           Supabase 실시간 동기화
+           - 테이블: public.trip_checklist_items
+             (id text PK, category_id text, text text, checked bool,
+              sort_order int, updated_at timestamptz)
+           - 두 기기(남편/아내)가 같은 목록을 함께 편집합니다.
+           ============================================================ */
+        const SUPABASE_URL = 'https://mlvotnxntapggspylwfb.supabase.co';
+        const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_M41AXHS4_5cEHm-arLIXXw_avPqlCg2';
+        const TABLE = 'trip_checklist_items';
 
-        // 초기 데이터 구조 (요구사항 완벽 반영)
-        const DEFAULT_DATA = [
-            {
-                id: 'baby',
-                emoji: '👶',
-                title: '5개월 아기 & 방한',
-                subtitle: '육지 추위 완벽 차단 & 수유/외출 필수템',
-                isOpen: true,
-                items: [
-                    { id: 'b1', text: '방한복 / 패딩 우주복 (기모 안감)', checked: false },
-                    { id: 'b2', text: '아기 겨울 모자 & 손싸개/양말', checked: false },
-                    { id: 'b3', text: '두툼한 방한 블랭킷 & 유모차/아기띠 워머', checked: false },
-                    { id: 'b4', text: '기저귀 (4박 5일 넉넉히) & 휴대용 물티슈', checked: false },
-                    { id: 'b5', text: '분유 / 젖병 / 보온병 (분유포트 또는 보온병 세척솔)', checked: false },
-                    { id: 'b6', text: '아기띠 (힙시트) & 침받이', checked: false },
-                    { id: 'b7', text: '아기 여벌옷 (내복, 외출복 하루 2벌 기준) & 손수건', checked: false },
-                    { id: 'b8', text: '아기 상비약 (체온계, 해열제, 비판텐, 콧물흡입기 등)', checked: false }
-                ]
-            },
-            {
-                id: 'adult',
-                emoji: '🧥',
-                title: '어른 한파 대비',
-                subtitle: '성산 영상 날씨 vs 서울 최저 -4℃ 일교차 대비',
-                isOpen: true,
-                items: [
-                    { id: 'a1', text: '서울 최저 -4℃ 한파용 두꺼운 패딩 / 롱패딩', checked: false },
-                    { id: 'a2', text: '이너 레이어드 옷 (히트텍, 니트, 기모 맨투맨 등)', checked: false },
-                    { id: 'a3', text: '목도리 / 장갑 / 핫팩 (실외 이동 대비)', checked: false },
-                    { id: 'a4', text: '접이식 우산 (기상 변화 대비)', checked: false },
-                    { id: 'a5', text: '스마트폰 충전기 & 대용량 보조배터리', checked: false }
-                ]
-            },
-            {
-                id: 'travel',
-                emoji: '🚗',
-                title: '이동 & 숙소',
-                subtitle: '항공 탑승 서류, 김포 렌터카, 숙박 체크',
-                isOpen: true,
-                items: [
-                    { id: 't1', text: '항공 신분증(성인) · 아기 주민등록등본 또는 가족관계증명서', checked: false },
-                    { id: 't2', text: '김포 렌터카 운전면허증 지참', checked: false },
-                    { id: 't3', text: '렌터카 5개월 아기용 카시트(신생아/바구니형 또는 컨버터블) 예약·장착 확인', checked: false },
-                    { id: 't4', text: '숙소 준비물 (세면도구, 아기 세제, 충전 멀티탭 등)', checked: false }
-                ]
-            },
-            {
-                id: 'mission',
-                emoji: '🎮',
-                title: '청주 본가 미션',
-                subtitle: 'PS4 Pro 정리 및 당근마켓 판매 미션',
-                isOpen: true,
-                items: [
-                    { id: 'm1', text: 'PS4 Pro 1TB 풀박스 구성품 & 듀얼쇼크 2개 상태 확인', checked: false },
-                    { id: 'm2', text: '시스템 펌웨어 버전 확인 후 PSN 주 사용 PS4 등록 해제 · 기기 초기화', checked: false },
-                    { id: 'm3', text: '청주 본가 도착 후 당근마켓 동네인증 & 판매글 등록', checked: false }
-                ]
-            }
+        // 로컬 스토리지 키 (오프라인 캐시 · 아코디언 열림 상태)
+        const CACHE_KEY = 'jeju_trip_rows_v2';
+        const OPEN_KEY = 'jeju_trip_open_v2';
+        const LEGACY_KEY = 'jeju_seoul_cheongju_trip_v1';
+
+        // 카테고리 정의 (UI 순서 고정)
+        const CATEGORIES = [
+            { id: 'baby',    emoji: '👶', title: '5개월 아기 & 방한', subtitle: '육지 추위 완벽 차단 & 수유/외출 필수템' },
+            { id: 'adult',   emoji: '🧥', title: '어른 한파 대비',     subtitle: '성산 영상 날씨 vs 서울 최저 -4℃ 일교차 대비' },
+            { id: 'travel',  emoji: '🚗', title: '이동 & 숙소',        subtitle: '항공 탑승 서류, 김포 렌터카, 숙박 체크' },
+            { id: 'mission', emoji: '🎮', title: '청주 본가 미션',     subtitle: 'PS4 Pro 정리 및 당근마켓 판매 미션' }
+        ];
+
+        // 기본 시드 항목 20개 (DB가 완전히 비었을 때만 넣습니다)
+        const DEFAULT_ITEMS = [
+            { id: 'b1', category_id: 'baby', text: '방한복 / 패딩 우주복 (기모 안감)' },
+            { id: 'b2', category_id: 'baby', text: '아기 겨울 모자 & 손싸개/양말' },
+            { id: 'b3', category_id: 'baby', text: '두툼한 방한 블랭킷 & 유모차/아기띠 워머' },
+            { id: 'b4', category_id: 'baby', text: '기저귀 (4박 5일 넉넉히) & 휴대용 물티슈' },
+            { id: 'b5', category_id: 'baby', text: '분유 / 젖병 / 보온병 (분유포트 또는 보온병 세척솔)' },
+            { id: 'b6', category_id: 'baby', text: '아기띠 (힙시트) & 침받이' },
+            { id: 'b7', category_id: 'baby', text: '아기 여벌옷 (내복, 외출복 하루 2벌 기준) & 손수건' },
+            { id: 'b8', category_id: 'baby', text: '아기 상비약 (체온계, 해열제, 비판텐, 콧물흡입기 등)' },
+
+            { id: 'a1', category_id: 'adult', text: '서울 최저 -4℃ 한파용 두꺼운 패딩 / 롱패딩' },
+            { id: 'a2', category_id: 'adult', text: '이너 레이어드 옷 (히트텍, 니트, 기모 맨투맨 등)' },
+            { id: 'a3', category_id: 'adult', text: '목도리 / 장갑 / 핫팩 (실외 이동 대비)' },
+            { id: 'a4', category_id: 'adult', text: '접이식 우산 (기상 변화 대비)' },
+            { id: 'a5', category_id: 'adult', text: '스마트폰 충전기 & 대용량 보조배터리' },
+
+            { id: 't1', category_id: 'travel', text: '항공 신분증(성인) · 아기 주민등록등본 또는 가족관계증명서' },
+            { id: 't2', category_id: 'travel', text: '김포 렌터카 운전면허증 지참' },
+            { id: 't3', category_id: 'travel', text: '렌터카 5개월 아기용 카시트(신생아/바구니형 또는 컨버터블) 예약·장착 확인' },
+            { id: 't4', category_id: 'travel', text: '숙소 준비물 (세면도구, 아기 세제, 충전 멀티탭 등)' },
+
+            { id: 'm1', category_id: 'mission', text: 'PS4 Pro 1TB 풀박스 구성품 & 듀얼쇼크 2개 상태 확인' },
+            { id: 'm2', category_id: 'mission', text: '시스템 펌웨어 버전 확인 후 PSN 주 사용 PS4 등록 해제 · 기기 초기화' },
+            { id: 'm3', category_id: 'mission', text: '청주 본가 도착 후 당근마켓 동네인증 & 판매글 등록' }
         ];
 
         // 상태 변수
-        let appData = [];
+        let rows = [];                              // DB 행(플랫) 로컬 사본
+        let openState = {};                         // 카테고리 열림 상태 (localStorage)
         let filterUncompletedOnly = false;
         let currentModalAction = null;
 
-        // 초기화 함수
+        let sb = null;                              // supabase 클라이언트
+        let channel = null;                         // realtime 채널
+        let realtimeState = 'connecting';           // connecting | ok | error
+        let dbReachable = true;
+        let pendingWrites = 0;
+        let seedInFlight = false;
+        let resubTimer = null;
+        let remoteFlashIds = new Set();             // 원격 변경 하이라이트용
+
+        /* ---------------- 초기화 ---------------- */
         function init() {
-            loadData();
+            loadCache();
+            loadOpenState();
             renderCategories();
             updateSummary();
             setupEventListeners();
+            initSupabase();
         }
 
-        // localStorage에서 데이터 불러오기
-        function loadData() {
+        async function initSupabase() {
+            if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+                console.warn('Supabase 라이브러리를 불러오지 못했습니다. 로컬 모드로 동작합니다.');
+                realtimeState = 'error';
+                dbReachable = false;
+                refreshSyncUi();
+                return;
+            }
             try {
-                const saved = localStorage.getItem(STORAGE_KEY);
-                if (saved) {
-                    appData = JSON.parse(saved);
-                } else {
-                    appData = JSON.parse(JSON.stringify(DEFAULT_DATA));
-                    saveData();
+                sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+                    auth: { persistSession: false, autoRefreshToken: false }
+                });
+            } catch (e) {
+                console.error('Supabase 초기화 오류:', e);
+                realtimeState = 'error';
+                dbReachable = false;
+                refreshSyncUi();
+                return;
+            }
+            await loadFromDb();
+            subscribeRealtime();
+        }
+
+        /* ---------------- 데이터 정규화 / 정렬 ---------------- */
+        function normalizeRow(r) {
+            return {
+                id: String(r.id),
+                category_id: String(r.category_id || ''),
+                text: (r.text == null) ? '' : String(r.text),
+                checked: !!r.checked,
+                sort_order: Number.isFinite(Number(r.sort_order)) ? Number(r.sort_order) : 0,
+                updated_at: r.updated_at || null
+            };
+        }
+
+        function compareRows(a, b) {
+            if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+            return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
+        }
+
+        function applyRows(data) {
+            rows = (data || []).map(normalizeRow).sort(compareRows);
+            saveCache();
+            renderCategories();
+            updateSummary();
+            refreshSyncUi();
+        }
+
+        /* ---------------- 오프라인 캐시 ---------------- */
+        function saveCache() {
+            try {
+                localStorage.setItem(CACHE_KEY, JSON.stringify(rows));
+            } catch (e) {
+                console.error('캐시 저장 오류:', e);
+            }
+        }
+
+        function loadCache() {
+            try {
+                const raw = localStorage.getItem(CACHE_KEY);
+                if (!raw) return;
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) rows = parsed.map(normalizeRow).sort(compareRows);
+            } catch (e) {
+                console.error('캐시 로드 오류:', e);
+            }
+        }
+
+        function loadOpenState() {
+            try {
+                const raw = localStorage.getItem(OPEN_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') openState = parsed;
                 }
             } catch (e) {
-                console.error('데이터 로드 오류:', e);
-                appData = JSON.parse(JSON.stringify(DEFAULT_DATA));
+                console.error('열림 상태 로드 오류:', e);
             }
+            CATEGORIES.forEach(c => {
+                if (typeof openState[c.id] !== 'boolean') openState[c.id] = true;
+            });
         }
 
-        // localStorage에 데이터 저장하기
-        function saveData() {
+        function saveOpenState() {
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+                localStorage.setItem(OPEN_KEY, JSON.stringify(openState));
             } catch (e) {
-                console.error('데이터 저장 오류:', e);
+                console.error('열림 상태 저장 오류:', e);
             }
         }
 
-        // 이벤트 리스너 등록
+        function readLegacyCache() {
+            try {
+                const raw = localStorage.getItem(LEGACY_KEY);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        /* ---------------- 시드 데이터 ---------------- */
+        function buildDefaultRows() {
+            const nowIso = new Date().toISOString();
+            return DEFAULT_ITEMS.map((it, idx) => ({
+                id: it.id,
+                category_id: it.category_id,
+                text: it.text,
+                checked: false,
+                sort_order: idx,
+                updated_at: nowIso
+            }));
+        }
+
+        // 이전 버전(localStorage만 쓰던 시절)의 체크 내역이 있으면 그대로 살려서 시드
+        function buildSeedRows() {
+            const legacy = readLegacyCache();
+            if (legacy && legacy.length) {
+                const out = [];
+                let order = 0;
+                legacy.forEach(cat => {
+                    if (!cat || !CATEGORIES.some(c => c.id === cat.id)) return;
+                    (cat.items || []).forEach(it => {
+                        if (!it || !it.text) return;
+                        out.push({
+                            id: String(it.id || ('legacy_' + order)),
+                            category_id: cat.id,
+                            text: String(it.text),
+                            checked: !!it.checked,
+                            sort_order: order++,
+                            updated_at: new Date().toISOString()
+                        });
+                    });
+                });
+                if (out.length) return out;
+            }
+            return buildDefaultRows();
+        }
+
+        /* ---------------- DB 읽기 / 시딩 ---------------- */
+        async function loadFromDb() {
+            if (!sb) return;
+            const { data, error } = await sb
+                .from(TABLE)
+                .select('*')
+                .order('sort_order', { ascending: true })
+                .order('id', { ascending: true });
+
+            if (error) {
+                console.error('목록 조회 실패:', error);
+                dbReachable = false;
+                refreshSyncUi();
+                return;
+            }
+
+            dbReachable = true;
+
+            if (!data || data.length === 0) {
+                if (!seedInFlight) await seedIfEmpty();
+                else refreshSyncUi();
+                return;
+            }
+
+            applyRows(data);
+        }
+
+        async function seedIfEmpty() {
+            if (!sb || seedInFlight) return;
+            seedInFlight = true;
+            refreshSyncUi();
+            try {
+                // 두 기기가 동시에 처음 열었을 때 중복 시딩을 막기 위해 한 번 더 확인
+                const { count, error: countError } = await sb
+                    .from(TABLE)
+                    .select('id', { count: 'exact', head: true });
+
+                if (countError) {
+                    console.error('시딩 전 확인 실패:', countError);
+                    dbReachable = false;
+                    return;
+                }
+                if (typeof count === 'number' && count > 0) {
+                    await loadFromDb();
+                    return;
+                }
+
+                const seedRows = buildSeedRows();
+                const { data, error } = await sb
+                    .from(TABLE)
+                    .upsert(seedRows, { onConflict: 'id' })
+                    .select();
+
+                if (error) {
+                    console.error('기본 목록 저장 실패:', error);
+                    dbReachable = false;
+                    return;
+                }
+
+                try { localStorage.removeItem(LEGACY_KEY); } catch (e) {}
+
+                applyRows(data && data.length ? data : seedRows);
+                dbReachable = true;
+                showToast('기본 체크리스트를 두 기기 공용으로 준비했어요.');
+            } catch (e) {
+                console.error('시딩 오류:', e);
+                dbReachable = false;
+            } finally {
+                seedInFlight = false;
+                refreshSyncUi();
+            }
+        }
+
+        async function refreshFromDb() {
+            if (!sb) return;
+            const { data, error } = await sb
+                .from(TABLE)
+                .select('*')
+                .order('sort_order', { ascending: true })
+                .order('id', { ascending: true });
+
+            if (error) {
+                console.error('새로고침 실패:', error);
+                dbReachable = false;
+                refreshSyncUi();
+                return;
+            }
+            dbReachable = true;
+            applyRows(data || []);
+        }
+
+        /* ---------------- 실시간 구독 ---------------- */
+        function subscribeRealtime() {
+            if (!sb) return;
+            if (channel) {
+                try { sb.removeChannel(channel); } catch (e) {}
+                channel = null;
+            }
+
+            channel = sb
+                .channel('trip-checklist-sync')
+                .on('postgres_changes', {
+                    event: '*',
+                    schema: 'public',
+                    table: TABLE
+                }, handleRealtimeChange)
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') {
+                        realtimeState = 'ok';
+                        refreshSyncUi();
+                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                        realtimeState = 'error';
+                        refreshSyncUi();
+                        if (status !== 'CLOSED') scheduleResubscribe();
+                    } else {
+                        realtimeState = 'connecting';
+                        refreshSyncUi();
+                    }
+                });
+        }
+
+        function scheduleResubscribe() {
+            if (resubTimer) return;
+            resubTimer = setTimeout(() => {
+                resubTimer = null;
+                if (!navigator.onLine) return;
+                realtimeState = 'connecting';
+                refreshSyncUi();
+                subscribeRealtime();
+                refreshFromDb();
+            }, 5000);
+        }
+
+        function handleRealtimeChange(payload) {
+            if (!payload || !payload.eventType) return;
+            const type = payload.eventType;
+
+            if (type === 'INSERT' || type === 'UPDATE') {
+                const incoming = normalizeRow(payload.new);
+                if (!CATEGORIES.some(c => c.id === incoming.category_id)) return;
+                const idx = rows.findIndex(r => r.id === incoming.id);
+                if (idx >= 0) {
+                    const before = rows[idx];
+                    if (before.checked !== incoming.checked || before.text !== incoming.text ||
+                        before.category_id !== incoming.category_id || before.sort_order !== incoming.sort_order) {
+                        remoteFlashIds.add(incoming.id);
+                    }
+                    rows[idx] = incoming;
+                } else {
+                    rows.push(incoming);
+                    remoteFlashIds.add(incoming.id);
+                }
+                rows.sort(compareRows);
+            } else if (type === 'DELETE') {
+                const oldId = payload.old && payload.old.id;
+                if (!oldId) return;
+                const before = rows.length;
+                rows = rows.filter(r => r.id !== String(oldId));
+                if (rows.length === before) return;
+            } else {
+                return;
+            }
+
+            saveCache();
+            renderCategories();
+            updateSummary();
+
+            if (remoteFlashIds.size) {
+                requestAnimationFrame(() => {
+                    remoteFlashIds.forEach(id => {
+                        const el = document.querySelector(`[data-item-row="${cssEscape(id)}"]`);
+                        if (el) {
+                            el.classList.add('remote-flash');
+                            setTimeout(() => el.classList.remove('remote-flash'), 1300);
+                        }
+                    });
+                    remoteFlashIds.clear();
+                });
+            }
+        }
+
+        /* ---------------- 동기화 상태 표시 ---------------- */
+        function refreshSyncUi() {
+            const dot = document.getElementById('sync-dot');
+            const txt = document.getElementById('sync-text');
+            const box = document.getElementById('sync-status');
+            if (!dot || !txt || !box) return;
+
+            let state;
+            if (!navigator.onLine || !dbReachable || realtimeState === 'error') state = 'error';
+            else if (realtimeState === 'connecting' || seedInFlight) state = 'connecting';
+            else if (pendingWrites > 0) state = 'saving';
+            else state = 'ok';
+
+            if (state === 'ok') {
+                dot.className = 'w-1.5 h-1.5 rounded-full bg-sage-500';
+                txt.textContent = '실시간 동기화';
+                box.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 border border-sage-100 shadow-sm text-[11px] font-semibold text-sage-600 transition-colors';
+                box.title = '아내분 폰과 실시간으로 함께 반영됩니다.';
+            } else if (state === 'saving') {
+                dot.className = 'w-1.5 h-1.5 rounded-full bg-warm-400 sync-pulse';
+                txt.textContent = '저장 중…';
+                box.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 border border-warm-200 shadow-sm text-[11px] font-semibold text-warm-700 transition-colors';
+                box.title = '변경 사항을 서버에 저장하고 있습니다.';
+            } else if (state === 'connecting') {
+                dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400 sync-pulse';
+                txt.textContent = '연결 중…';
+                box.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 border border-warm-200 shadow-sm text-[11px] font-semibold text-warm-700 transition-colors';
+                box.title = '실시간 연결을 준비하고 있습니다.';
+            } else {
+                dot.className = 'w-1.5 h-1.5 rounded-full bg-rose-500';
+                txt.textContent = '오프라인 · 이 기기에만 저장';
+                box.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 border border-rose-200 shadow-sm text-[11px] font-semibold text-rose-600 transition-colors';
+                box.title = '서버에 연결하지 못했습니다. 이 기기에는 저장되며, 연결되면 자동으로 다시 맞춥니다.';
+            }
+        }
+
+        function bumpPending(delta) {
+            pendingWrites = Math.max(0, pendingWrites + delta);
+            refreshSyncUi();
+        }
+
+        /* ---------------- 이벤트 ---------------- */
         function setupEventListeners() {
             const filterCheckbox = document.getElementById('filter-uncompleted');
             filterCheckbox.addEventListener('change', (e) => {
                 filterUncompletedOnly = e.target.checked;
                 renderCategories();
             });
+
+            const container = document.getElementById('categories-container');
+
+            // 항목 체크 토글 (이벤트 위임)
+            container.addEventListener('change', (e) => {
+                const cb = e.target.closest('input[data-action="toggle"]');
+                if (!cb) return;
+                toggleItem(cb.dataset.catId, cb.dataset.itemId, cb.checked);
+            });
+
+            // 항목 삭제 / 아코디언 토글 (이벤트 위임)
+            container.addEventListener('click', (e) => {
+                const delBtn = e.target.closest('[data-action="delete-item"]');
+                if (delBtn) {
+                    e.preventDefault();
+                    deleteItem(delBtn.dataset.catId, delBtn.dataset.itemId);
+                    return;
+                }
+                const header = e.target.closest('[data-action="accordion"]');
+                if (header) {
+                    e.preventDefault();
+                    toggleAccordion(header.dataset.catId);
+                }
+            });
+
+            document.getElementById('custom-modal').addEventListener('click', (e) => {
+                if (e.target.id === 'custom-modal') closeModal();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && !document.getElementById('custom-modal').classList.contains('hidden')) closeModal();
+            });
+
+            // 탭 복귀 / 네트워크 복구 시 최신 상태로 맞춤 (iOS 백그라운드 대비)
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && sb) refreshFromDb();
+            });
+            window.addEventListener('online', () => {
+                realtimeState = 'connecting';
+                refreshSyncUi();
+                subscribeRealtime();
+                refreshFromDb();
+            });
+            window.addEventListener('offline', refreshSyncUi);
         }
 
-        // 카테고리 및 항목 렌더링
+        /* ---------------- 렌더링 ---------------- */
         function renderCategories() {
             const container = document.getElementById('categories-container');
+
+            // 입력 중이던 값과 포커스 보존 (원격 변경으로 다시 그려질 때 입력이 날아가지 않도록)
+            const preserved = {};
+            container.querySelectorAll('input[id^="input-"]').forEach(el => {
+                preserved[el.id] = el.value;
+            });
+            const activeEl = document.activeElement;
+            const activeId = (activeEl && activeEl.id && activeEl.id.indexOf('input-') === 0) ? activeEl.id : null;
+
             container.innerHTML = '';
 
-            appData.forEach((category) => {
-                // 카테고리 내 통계 계산
-                const totalCount = category.items.length;
-                const completedCount = category.items.filter(item => item.checked).length;
+            // 알 수 없는 카테고리에 남아 있는 항목도 숨기지 않고 보여줍니다
+            const knownIds = CATEGORIES.map(c => c.id);
+            const unknown = rows.filter(r => knownIds.indexOf(r.category_id) === -1);
+            const renderList = CATEGORIES.slice();
+            if (unknown.length) {
+                renderList.push({ id: '__other', emoji: '📦', title: '기타', subtitle: '분류되지 않은 항목' });
+            }
+
+            renderList.forEach((category) => {
+                const catItems = rows
+                    .filter(r => r.category_id === category.id)
+                    .sort(compareRows);
+
+                const totalCount = catItems.length;
+                const completedCount = catItems.filter(item => item.checked).length;
                 const isAllDone = totalCount > 0 && totalCount === completedCount;
+                const isOpen = (category.id === '__other') ? true : !!openState[category.id];
 
-                // 필터링 적용된 항목 리스트
                 const visibleItems = filterUncompletedOnly
-                    ? category.items.filter(item => !item.checked)
-                    : category.items;
+                    ? catItems.filter(item => !item.checked)
+                    : catItems;
 
-                // 카드 엘리먼트 생성
                 const card = document.createElement('section');
                 card.className = `bg-white rounded-2xl border transition-all duration-200 overflow-hidden shadow-xs ${
                     isAllDone ? 'border-sage-500/40 bg-sage-50/20' : 'border-warm-200/80'
                 }`;
 
-                // 카드 헤더 (아코디언 토글)
                 const headerHtml = `
-                    <div onclick="toggleAccordion('${category.id}')" 
+                    <div data-action="accordion" data-cat-id="${escapeHtml(category.id)}"
                          class="p-4 sm:p-5 flex items-center justify-between cursor-pointer select-none hover:bg-warm-50/70 transition-colors">
                         <div class="flex items-center gap-3.5">
                             <div class="w-11 h-11 rounded-2xl bg-warm-100/80 border border-warm-200/60 flex items-center justify-center text-2xl shrink-0">
@@ -335,31 +761,30 @@
                             </div>
                             <div>
                                 <div class="flex items-center gap-2 flex-wrap">
-                                    <h2 class="text-base sm:text-lg font-bold text-stone-800">${category.title}</h2>
+                                    <h2 class="text-base sm:text-lg font-bold text-stone-800">${escapeHtml(category.title)}</h2>
                                     <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full ${
-                                        isAllDone 
-                                            ? 'bg-sage-100 text-sage-600' 
+                                        isAllDone
+                                            ? 'bg-sage-100 text-sage-600'
                                             : 'bg-warm-100 text-warm-800'
                                     }">
                                         ${completedCount}/${totalCount}
                                     </span>
                                 </div>
-                                <p class="text-xs text-stone-500 mt-0.5">${category.subtitle}</p>
+                                <p class="text-xs text-stone-500 mt-0.5">${escapeHtml(category.subtitle)}</p>
                             </div>
                         </div>
-                        <button type="button" class="p-2 text-stone-400 hover:text-stone-700 rounded-xl transition-transform duration-200 ${category.isOpen ? 'rotate-180' : ''}" aria-label="접기/펼치기">
+                        <button type="button" class="p-2 text-stone-400 hover:text-stone-700 rounded-xl transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" aria-label="접기/펼치기">
                             <i data-lucide="chevron-down" class="w-5 h-5"></i>
                         </button>
                     </div>
                 `;
 
-                // 아이템 리스트 HTML 생성
                 let itemsHtml = '';
                 if (visibleItems.length === 0) {
                     itemsHtml = `
                         <div class="py-6 text-center text-sm text-stone-400 bg-stone-50/50 rounded-xl border border-dashed border-stone-200 my-2">
-                            ${filterUncompletedOnly && totalCount > 0 
-                                ? '🎉 이 카테고리의 모든 준비물을 챙겼어요!' 
+                            ${filterUncompletedOnly && totalCount > 0
+                                ? '🎉 이 카테고리의 모든 준비물을 챙겼어요!'
                                 : '등록된 항목이 없습니다. 아래에서 추가해보세요.'}
                         </div>
                     `;
@@ -367,27 +792,31 @@
                     itemsHtml = `<ul class="divide-y divide-stone-100">`;
                     visibleItems.forEach((item) => {
                         itemsHtml += `
-                            <li class="group py-3 px-2 sm:px-3 flex items-center justify-between gap-3 hover:bg-warm-50/50 rounded-xl transition-colors">
+                            <li data-item-row="${escapeHtml(item.id)}" class="group py-3 px-2 sm:px-3 flex items-center justify-between gap-3 hover:bg-warm-50/50 rounded-xl transition-colors">
                                 <label class="checkbox-wrapper flex items-start sm:items-center gap-3.5 cursor-pointer flex-1 select-none py-0.5">
-                                    <input type="checkbox" 
-                                           class="sr-only" 
-                                           ${item.checked ? 'checked' : ''} 
-                                           onchange="toggleItem('${category.id}', '${item.id}')">
+                                    <input type="checkbox"
+                                           class="sr-only"
+                                           data-action="toggle"
+                                           data-cat-id="${escapeHtml(category.id)}"
+                                           data-item-id="${escapeHtml(item.id)}"
+                                           ${item.checked ? 'checked' : ''}>
                                     <div class="w-5 h-5 mt-0.5 sm:mt-0 rounded-md border-2 border-stone-300 bg-white flex items-center justify-center shrink-0 transition-colors group-hover:border-warm-500">
                                         <svg class="check-icon w-3.5 h-3.5 text-white fill-none stroke-current stroke-[3]" viewBox="0 0 24 24">
                                             <polyline points="20 6 9 17 4 12"></polyline>
                                         </svg>
                                     </div>
                                     <span class="text-sm sm:text-[15px] leading-snug transition-all ${
-                                        item.checked 
-                                            ? 'line-through text-stone-400' 
+                                        item.checked
+                                            ? 'line-through text-stone-400'
                                             : 'text-stone-700 font-medium'
                                     }">
                                         ${escapeHtml(item.text)}
                                     </span>
                                 </label>
-                                <button type="button" 
-                                        onclick="deleteItem('${category.id}', '${item.id}')" 
+                                <button type="button"
+                                        data-action="delete-item"
+                                        data-cat-id="${escapeHtml(category.id)}"
+                                        data-item-id="${escapeHtml(item.id)}"
                                         class="p-2 text-stone-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
                                         title="항목 삭제"
                                         aria-label="항목 삭제">
@@ -399,15 +828,14 @@
                     itemsHtml += `</ul>`;
                 }
 
-                // 항목 직접 추가 입력창 HTML
                 const addInputHtml = `
                     <form onsubmit="addItem(event, '${category.id}')" class="mt-3 pt-3 border-t border-stone-100 flex items-center gap-2">
-                        <input type="text" 
-                               id="input-${category.id}" 
-                               placeholder="추가할 준비물이나 할 일을 입력하세요..." 
+                        <input type="text"
+                               id="input-${category.id}"
+                               placeholder="추가할 준비물이나 할 일을 입력하세요..."
                                class="flex-1 text-sm bg-stone-50 hover:bg-stone-100/70 focus:bg-white text-stone-800 placeholder-stone-400 px-3.5 py-2.5 rounded-xl border border-stone-200 focus:border-warm-500 focus:outline-none transition-all"
                                required>
-                        <button type="submit" 
+                        <button type="submit"
                                 class="inline-flex items-center justify-center gap-1 px-4 py-2.5 bg-warm-600 hover:bg-warm-700 active:scale-95 text-white text-sm font-semibold rounded-xl shadow-xs transition-all shrink-0">
                             <i data-lucide="plus" class="w-4 h-4"></i>
                             <span>추가</span>
@@ -415,9 +843,8 @@
                     </form>
                 `;
 
-                // 본문 컨테이너 (아코디언 열림/닫힘 상태 반영)
                 const bodyHtml = `
-                    <div class="${category.isOpen ? 'block' : 'hidden'} px-4 sm:px-5 pb-5 pt-1 border-t border-stone-100/80">
+                    <div class="${isOpen ? 'block' : 'hidden'} px-4 sm:px-5 pb-5 pt-1 border-t border-stone-100/80">
                         ${itemsHtml}
                         ${addInputHtml}
                     </div>
@@ -427,76 +854,211 @@
                 container.appendChild(card);
             });
 
-            // 아이콘 다시 그리기
-            lucide.createIcons();
+            // 보존한 입력값 / 포커스 복원
+            Object.keys(preserved).forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = preserved[id];
+            });
+            if (activeId) {
+                const el = document.getElementById(activeId);
+                if (el) {
+                    el.focus();
+                    const len = el.value.length;
+                    try { el.setSelectionRange(len, len); } catch (e) {}
+                }
+            }
+
+            if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                window.lucide.createIcons();
+            }
         }
 
-        // 아코디언 열기/닫기
+        /* ---------------- 사용자 동작 ---------------- */
         function toggleAccordion(categoryId) {
-            const category = appData.find(c => c.id === categoryId);
-            if (category) {
-                category.isOpen = !category.isOpen;
-                saveData();
+            openState[categoryId] = !openState[categoryId];
+            saveOpenState();
+            renderCategories();
+        }
+
+        function toggleItem(categoryId, itemId, checked) {
+            const row = rows.find(r => r.id === itemId && r.category_id === categoryId);
+            if (!row) {
                 renderCategories();
+                return;
+            }
+            row.checked = (typeof checked === 'boolean') ? checked : !row.checked;
+            row.updated_at = new Date().toISOString();
+            saveCache();
+            renderCategories();
+            updateSummary();
+            pushToggle(row);
+        }
+
+        async function pushToggle(row) {
+            if (!sb) return;
+            bumpPending(1);
+            try {
+                const { error } = await sb
+                    .from(TABLE)
+                    .update({ checked: row.checked, updated_at: row.updated_at })
+                    .eq('id', row.id);
+                if (error) throw error;
+                dbReachable = true;
+            } catch (e) {
+                console.error('체크 상태 저장 실패:', e);
+                showToast('서버 저장에 실패했어요. 연결을 확인할게요.');
+                await refreshFromDb();
+            } finally {
+                bumpPending(-1);
             }
         }
 
-        // 체크박스 상태 토글
-        function toggleItem(categoryId, itemId) {
-            const category = appData.find(c => c.id === categoryId);
-            if (!category) return;
-
-            const item = category.items.find(i => i.id === itemId);
-            if (item) {
-                item.checked = !item.checked;
-                saveData();
-                renderCategories();
-                updateSummary();
-            }
+        function nextSortOrder() {
+            if (!rows.length) return 0;
+            return rows.reduce((max, r) => Math.max(max, r.sort_order || 0), 0) + 1;
         }
 
-        // 새 항목 추가
-        function addItem(event, categoryId) {
+        async function addItem(event, categoryId) {
             event.preventDefault();
             const input = document.getElementById(`input-${categoryId}`);
+            if (!input) return;
             const text = input.value.trim();
             if (!text) return;
 
-            const category = appData.find(c => c.id === categoryId);
-            if (category) {
-                category.items.push({
-                    id: 'custom_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-                    text: text,
-                    checked: false
-                });
-                category.isOpen = true;
-                saveData();
+            const newRow = {
+                id: 'custom_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
+                category_id: categoryId,
+                text: text,
+                checked: false,
+                sort_order: nextSortOrder(),
+                updated_at: new Date().toISOString()
+            };
+
+            rows.push(newRow);
+            rows.sort(compareRows);
+            if (categoryId !== '__other') {
+                openState[categoryId] = true;
+                saveOpenState();
+            }
+            input.value = '';
+            saveCache();
+            renderCategories();
+            updateSummary();
+            showToast('새 항목이 추가되었습니다.');
+
+            if (!sb) return;
+            bumpPending(1);
+            try {
+                const { error } = await sb.from(TABLE).insert(newRow);
+                if (error) throw error;
+                dbReachable = true;
+            } catch (e) {
+                console.error('항목 추가 실패:', e);
+                rows = rows.filter(r => r.id !== newRow.id);
+                saveCache();
                 renderCategories();
                 updateSummary();
-                showToast('새 항목이 추가되었습니다.');
+                showToast('서버 저장에 실패했어요. 연결을 확인할게요.');
+                await refreshFromDb();
+            } finally {
+                bumpPending(-1);
             }
         }
 
-        // 항목 삭제
-        function deleteItem(categoryId, itemId) {
-            const category = appData.find(c => c.id === categoryId);
-            if (!category) return;
+        async function deleteItem(categoryId, itemId) {
+            const target = rows.find(r => r.id === itemId && r.category_id === categoryId);
+            if (!target) return;
 
-            category.items = category.items.filter(i => i.id !== itemId);
-            saveData();
+            rows = rows.filter(r => !(r.id === itemId && r.category_id === categoryId));
+            saveCache();
             renderCategories();
             updateSummary();
             showToast('항목이 삭제되었습니다.');
+
+            if (!sb) return;
+            bumpPending(1);
+            try {
+                const { error } = await sb.from(TABLE).delete().eq('id', target.id);
+                if (error) throw error;
+                dbReachable = true;
+            } catch (e) {
+                console.error('항목 삭제 실패:', e);
+                rows.push(target);
+                rows.sort(compareRows);
+                saveCache();
+                renderCategories();
+                updateSummary();
+                showToast('서버 저장에 실패했어요. 연결을 확인할게요.');
+                await refreshFromDb();
+            } finally {
+                bumpPending(-1);
+            }
         }
 
-        // 상단 요약 카드 진행률 업데이트
+        async function resetAllChecks() {
+            const nowIso = new Date().toISOString();
+            let changed = false;
+            rows.forEach(r => {
+                if (r.checked) { r.checked = false; r.updated_at = nowIso; changed = true; }
+            });
+            saveCache();
+            renderCategories();
+            updateSummary();
+            showToast('모든 체크 표시가 초기화되었습니다.');
+
+            if (!sb || !changed) return;
+            bumpPending(1);
+            try {
+                const { error } = await sb
+                    .from(TABLE)
+                    .update({ checked: false, updated_at: nowIso })
+                    .eq('checked', true);
+                if (error) throw error;
+                dbReachable = true;
+            } catch (e) {
+                console.error('체크 초기화 실패:', e);
+                showToast('서버 저장에 실패했어요. 연결을 확인할게요.');
+                await refreshFromDb();
+            } finally {
+                bumpPending(-1);
+            }
+        }
+
+        async function resetToDefaults() {
+            const fresh = buildDefaultRows();
+            rows = fresh.slice();
+            saveCache();
+            renderCategories();
+            updateSummary();
+            showToast('기본 추천 체크리스트로 복원되었습니다.');
+
+            if (!sb) return;
+            bumpPending(1);
+            try {
+                const del = await sb.from(TABLE).delete().neq('id', '');
+                if (del.error) throw del.error;
+                const ins = await sb.from(TABLE).upsert(fresh, { onConflict: 'id' });
+                if (ins.error) throw ins.error;
+                dbReachable = true;
+                // 실시간 이벤트가 도착한 뒤 한 번 더 서버 기준으로 정리
+                setTimeout(refreshFromDb, 800);
+            } catch (e) {
+                console.error('기본값 복원 실패:', e);
+                showToast('서버 저장에 실패했어요. 연결을 확인할게요.');
+                await refreshFromDb();
+            } finally {
+                bumpPending(-1);
+            }
+        }
+
+        /* ---------------- 요약 / 모달 / 토스트 ---------------- */
         function updateSummary() {
             let total = 0;
             let completed = 0;
 
-            appData.forEach(cat => {
-                total += cat.items.length;
-                completed += cat.items.filter(i => i.checked).length;
+            rows.forEach(r => {
+                total += 1;
+                if (r.checked) completed += 1;
             });
 
             const percent = total === 0 ? 0 : Math.round((completed / total) * 100);
@@ -505,7 +1067,6 @@
             document.getElementById('progress-count').textContent = `(${completed} / ${total} 완료)`;
             document.getElementById('progress-bar').style.width = `${percent}%`;
 
-            // 진행률에 따른 응원 문구 배지 변경
             const badge = document.getElementById('status-badge');
             if (total === 0) {
                 badge.textContent = '항목을 추가해주세요 📝';
@@ -525,7 +1086,6 @@
             }
         }
 
-        // 모달 제어 (alert/confirm 대체)
         function openModal(actionType) {
             currentModalAction = actionType;
             const modal = document.getElementById('custom-modal');
@@ -536,11 +1096,11 @@
 
             if (actionType === 'reset-check') {
                 titleEl.textContent = '전체 체크 초기화';
-                descEl.textContent = '모든 항목의 체크 표시를 해제하시겠습니까? 직접 추가한 항목 목록은 그대로 유지됩니다.';
+                descEl.textContent = '모든 항목의 체크 표시를 해제하시겠습니까? 직접 추가한 항목 목록은 그대로 유지됩니다. (두 기기에 함께 반영됩니다)';
                 confirmBtn.textContent = '체크 해제하기';
             } else if (actionType === 'reset-default') {
                 titleEl.textContent = '기본 체크리스트로 복원';
-                descEl.textContent = '직접 추가하거나 삭제한 내역을 모두 지우고 처음 기본 추천 목록으로 되돌리시겠습니까?';
+                descEl.textContent = '직접 추가하거나 삭제한 내역을 모두 지우고 처음 기본 추천 목록으로 되돌리시겠습니까? 두 기기에 함께 반영됩니다.';
                 confirmBtn.textContent = '기본값 복원';
             }
 
@@ -548,7 +1108,6 @@
 
             modal.classList.remove('hidden');
             modal.classList.add('flex');
-            // 애니메이션 트리거
             requestAnimationFrame(() => {
                 modalBox.classList.remove('scale-95', 'opacity-0');
                 modalBox.classList.add('scale-100', 'opacity-100');
@@ -571,28 +1130,18 @@
 
         function executeModalAction() {
             if (currentModalAction === 'reset-check') {
-                appData.forEach(cat => {
-                    cat.items.forEach(item => item.checked = false);
-                });
-                saveData();
-                renderCategories();
-                updateSummary();
-                showToast('모든 체크 표시가 초기화되었습니다.');
+                resetAllChecks();
             } else if (currentModalAction === 'reset-default') {
-                appData = JSON.parse(JSON.stringify(DEFAULT_DATA));
-                saveData();
-                renderCategories();
-                updateSummary();
-                showToast('기본 추천 체크리스트로 복원되었습니다.');
+                resetToDefaults();
             }
             closeModal();
         }
 
-        // 토스트 알림 표시
         let toastTimeout;
         function showToast(message) {
             const toast = document.getElementById('toast');
             const toastMsg = document.getElementById('toast-msg');
+            if (!toast || !toastMsg) return;
             toastMsg.textContent = message;
 
             toast.classList.remove('opacity-0', 'translate-y-2');
@@ -605,7 +1154,7 @@
             }, 2200);
         }
 
-        // XSS 방지용 HTML 이스케이프
+        /* ---------------- 유틸 ---------------- */
         function escapeHtml(text) {
             const map = {
                 '&': '&amp;',
@@ -614,7 +1163,12 @@
                 '"': '&quot;',
                 "'": '&#039;'
             };
-            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+            return String(text == null ? '' : text).replace(/[&<>"']/g, function (m) { return map[m]; });
+        }
+
+        function cssEscape(value) {
+            if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
+            return String(value).replace(/["\\]/g, '\\$&');
         }
 
         // 페이지 로드 시 실행
