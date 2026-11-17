@@ -301,6 +301,7 @@
         let openState = {};                         // 카테고리 열림 상태 (localStorage)
         let filterUncompletedOnly = false;
         let currentModalAction = null;
+        let editingItemId = null;                   // 인라인 수정 중인 항목 id
 
         let sb = null;                              // supabase 클라이언트
         let channel = null;                         // realtime 채널
@@ -700,8 +701,26 @@
                 toggleItem(cb.dataset.catId, cb.dataset.itemId, cb.checked);
             });
 
-            // 항목 삭제 / 아코디언 토글 (이벤트 위임)
+            // 항목 수정 / 삭제 / 아코디언 토글 (이벤트 위임)
             container.addEventListener('click', (e) => {
+                const editBtn = e.target.closest('[data-action="edit-item"]');
+                if (editBtn) {
+                    e.preventDefault();
+                    startEdit(editBtn.dataset.itemId);
+                    return;
+                }
+                const saveBtn = e.target.closest('[data-action="save-edit"]');
+                if (saveBtn) {
+                    e.preventDefault();
+                    saveEdit(saveBtn.dataset.itemId);
+                    return;
+                }
+                const cancelBtn = e.target.closest('[data-action="cancel-edit"]');
+                if (cancelBtn) {
+                    e.preventDefault();
+                    cancelEdit();
+                    return;
+                }
                 const delBtn = e.target.closest('[data-action="delete-item"]');
                 if (delBtn) {
                     e.preventDefault();
@@ -712,6 +731,20 @@
                 if (header) {
                     e.preventDefault();
                     toggleAccordion(header.dataset.catId);
+                }
+            });
+
+            // 인라인 수정 입력: Enter 저장 / Escape 취소
+            container.addEventListener('keydown', (e) => {
+                const editInput = e.target.closest ? e.target.closest('input[data-action="edit-input"]') : null;
+                if (!editInput) return;
+                if (e.isComposing || e.keyCode === 229) return; // 한글 조합 중 Enter는 무시
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    saveEdit(editInput.dataset.itemId);
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelEdit();
                 }
             });
 
@@ -744,8 +777,17 @@
             container.querySelectorAll('input[id^="input-"]').forEach(el => {
                 preserved[el.id] = el.value;
             });
+            const preservedEdit = {};
+            container.querySelectorAll('input[data-action="edit-input"]').forEach(el => {
+                preservedEdit[el.dataset.itemId] = el.value;
+            });
             const activeEl = document.activeElement;
             const activeId = (activeEl && activeEl.id && activeEl.id.indexOf('input-') === 0) ? activeEl.id : null;
+            const activeEditId = (activeEl && activeEl.dataset && activeEl.dataset.action === 'edit-input') ? activeEl.dataset.itemId : null;
+            let activeEditCaret = null;
+            if (activeEditId) {
+                try { activeEditCaret = activeEl.selectionStart; } catch (e) { activeEditCaret = null; }
+            }
 
             container.innerHTML = '';
 
@@ -815,8 +857,65 @@
                 } else {
                     itemsHtml = `<ul class="divide-y divide-stone-100">`;
                     visibleItems.forEach((item) => {
-                        itemsHtml += `
-                            <li data-item-row="${escapeHtml(item.id)}" class="group py-3 px-2 sm:px-3 flex items-center justify-between gap-3 hover:bg-warm-50/50 rounded-xl transition-colors">
+                        const isEditing = (item.id === editingItemId);
+
+                        const actionsHtml = isEditing
+                            ? `
+                                <div class="flex items-center gap-1 shrink-0">
+                                    <button type="button"
+                                            data-action="save-edit"
+                                            data-item-id="${escapeHtml(item.id)}"
+                                            class="p-2.5 text-white bg-sage-500 hover:bg-sage-600 active:scale-95 rounded-lg shadow-xs transition-all"
+                                            title="수정 저장 (Enter)"
+                                            aria-label="수정 저장">
+                                        <i data-lucide="check" class="w-4 h-4"></i>
+                                    </button>
+                                    <button type="button"
+                                            data-action="cancel-edit"
+                                            data-item-id="${escapeHtml(item.id)}"
+                                            class="p-2.5 text-stone-500 bg-stone-100 hover:bg-stone-200 active:scale-95 rounded-lg transition-all"
+                                            title="취소 (Esc)"
+                                            aria-label="수정 취소">
+                                        <i data-lucide="x" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                            `
+                            : `
+                                <div class="flex items-center gap-0.5 sm:gap-1 shrink-0">
+                                    <button type="button"
+                                            data-action="edit-item"
+                                            data-cat-id="${escapeHtml(category.id)}"
+                                            data-item-id="${escapeHtml(item.id)}"
+                                            class="p-2.5 text-stone-300 hover:text-warm-600 hover:bg-warm-100 rounded-lg transition-colors sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
+                                            title="항목 수정"
+                                            aria-label="항목 수정">
+                                        <i data-lucide="pencil" class="w-4 h-4"></i>
+                                    </button>
+                                    <button type="button"
+                                            data-action="delete-item"
+                                            data-cat-id="${escapeHtml(category.id)}"
+                                            data-item-id="${escapeHtml(item.id)}"
+                                            class="p-2.5 text-stone-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
+                                            title="항목 삭제"
+                                            aria-label="항목 삭제">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                            `;
+
+                        const mainHtml = isEditing
+                            ? `
+                                <input type="text"
+                                       id="edit-input-${escapeHtml(item.id)}"
+                                       data-action="edit-input"
+                                       data-item-id="${escapeHtml(item.id)}"
+                                       value="${escapeHtml(item.text)}"
+                                       autocomplete="off"
+                                       enterkeyhint="done"
+                                       aria-label="항목 내용 수정"
+                                       class="flex-1 min-w-0 text-sm sm:text-[15px] font-medium text-stone-800 bg-white px-3 py-2 rounded-xl border border-warm-400 focus:border-warm-600 focus:ring-2 focus:ring-warm-200 focus:outline-none transition-all">
+                            `
+                            : `
                                 <label class="checkbox-wrapper flex items-start sm:items-center gap-3.5 cursor-pointer flex-1 select-none py-0.5">
                                     <input type="checkbox"
                                            class="sr-only"
@@ -837,15 +936,14 @@
                                         ${escapeHtml(item.text)}
                                     </span>
                                 </label>
-                                <button type="button"
-                                        data-action="delete-item"
-                                        data-cat-id="${escapeHtml(category.id)}"
-                                        data-item-id="${escapeHtml(item.id)}"
-                                        class="p-2 text-stone-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
-                                        title="항목 삭제"
-                                        aria-label="항목 삭제">
-                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                </button>
+                            `;
+
+                        itemsHtml += `
+                            <li data-item-row="${escapeHtml(item.id)}" class="group py-3 px-2 sm:px-3 flex items-center justify-between gap-2 sm:gap-3 rounded-xl transition-colors ${
+                                isEditing ? 'bg-warm-50/80 ring-1 ring-warm-200' : 'hover:bg-warm-50/50'
+                            }">
+                                ${mainHtml}
+                                ${actionsHtml}
                             </li>
                         `;
                     });
@@ -883,12 +981,28 @@
                 const el = document.getElementById(id);
                 if (el) el.value = preserved[id];
             });
+            Object.keys(preservedEdit).forEach(itemId => {
+                const el = document.querySelector(`input[data-action="edit-input"][data-item-id="${cssEscape(itemId)}"]`);
+                if (el) el.value = preservedEdit[itemId];
+            });
             if (activeId) {
                 const el = document.getElementById(activeId);
                 if (el) {
                     el.focus();
                     const len = el.value.length;
                     try { el.setSelectionRange(len, len); } catch (e) {}
+                }
+            }
+
+            // 수정 중인 항목: 자동 포커스 / 커서 위치 유지, 대상이 사라졌으면 수정 모드 해제
+            if (editingItemId) {
+                const editEl = document.querySelector(`input[data-action="edit-input"][data-item-id="${cssEscape(editingItemId)}"]`);
+                if (editEl) {
+                    editEl.focus();
+                    const pos = (activeEditId === editingItemId && activeEditCaret != null) ? activeEditCaret : editEl.value.length;
+                    try { editEl.setSelectionRange(pos, pos); } catch (e) {}
+                } else {
+                    editingItemId = null;
                 }
             }
 
@@ -930,6 +1044,79 @@
                 dbReachable = true;
             } catch (e) {
                 console.error('체크 상태 저장 실패:', e);
+                showToast('서버 저장에 실패했어요. 연결을 확인할게요.');
+                await refreshFromDb();
+            } finally {
+                bumpPending(-1);
+            }
+        }
+
+        /* ---------------- 항목 텍스트 인라인 수정 ---------------- */
+        function startEdit(itemId) {
+            const row = rows.find(r => r.id === itemId);
+            if (!row) return;
+            editingItemId = itemId;
+            renderCategories();
+        }
+
+        function cancelEdit() {
+            if (editingItemId == null) return;
+            editingItemId = null;
+            renderCategories();
+        }
+
+        async function saveEdit(itemId) {
+            const row = rows.find(r => r.id === itemId);
+            if (!row) {
+                editingItemId = null;
+                renderCategories();
+                return;
+            }
+
+            const input = document.querySelector(`input[data-action="edit-input"][data-item-id="${cssEscape(itemId)}"]`);
+            const raw = input ? input.value : (row.text || '');
+            const newText = raw.trim();
+
+            if (!newText) {
+                showToast('내용을 비울 수 없어요. 저장하려면 글자를 입력해 주세요.');
+                if (input) input.focus();
+                return;
+            }
+
+            if (newText === row.text) {
+                editingItemId = null;
+                renderCategories();
+                return;
+            }
+
+            const prevText = row.text;
+            const prevUpdatedAt = row.updated_at;
+            row.text = newText;
+            row.updated_at = new Date().toISOString();
+            editingItemId = null;
+            saveCache();
+            renderCategories();
+            showToast('항목이 수정되었습니다.');
+
+            if (!sb) return;
+            bumpPending(1);
+            try {
+                const { error } = await sb
+                    .from(TABLE)
+                    .update({ text: newText, updated_at: row.updated_at })
+                    .eq('id', itemId);
+                if (error) throw error;
+                dbReachable = true;
+            } catch (e) {
+                console.error('항목 수정 실패:', e);
+                // 서버 저장 실패 → 기존 텍스트로 롤백하고 서버 기준으로 재동기화
+                const cur = rows.find(r => r.id === itemId);
+                if (cur && cur.text === newText) {
+                    cur.text = prevText;
+                    cur.updated_at = prevUpdatedAt;
+                }
+                saveCache();
+                renderCategories();
                 showToast('서버 저장에 실패했어요. 연결을 확인할게요.');
                 await refreshFromDb();
             } finally {
